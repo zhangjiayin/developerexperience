@@ -1,0 +1,310 @@
+#!/bin/bash
+#
+# dep:  bash, Subversion command-line client, version 1.5.4. or later
+#
+# bug:  single file in tag without directory may be cause an error
+#
+# warning: rat  can not tag in local
+
+### svn url
+#base url
+TRUNK_BASE=http://qin/newsvn/qin/trunk
+QA_TAG_BASE=http://qin/newsvn/qin/tags/QA
+PROD_TAG_BASE=http://qin/newsvn/qin/tags/PROD
+
+#res base url
+RES_TRUNK_BASE=http://qin/newsvn/res/trunk
+RES_QA_TAG_BASE=http://qin/newsvn/res/tags/QA
+RES_PROD_TAG_BASE=http://qin/newsvn/res/tags/PROD
+
+SVN_PATH=/usr/bin/svn
+###svn url
+
+#config file
+DEPLOY_FILE=deploy.files
+
+#server base dir
+SERVER_BASE=/Data/Q/project
+RES_SERVER_BASE=/store2/image.360quan.cn
+
+
+#predefined
+MAKE_ACTION="make"
+DEPLOY_ACTION="deploy"
+DEPLOY_TYPE_DEFAULT="www1"
+#predefined
+
+#variable to use
+#
+#
+
+DEPLOY_TYPE=$DEPLOY_TYPE_DEFAULT
+
+# make or deploy
+ACTION=
+
+#for GetTagName return
+TEMP_TAG_NAME=
+
+# PROD or QA
+TAG_TYPE=
+QA_TAG_TYPE="QA"
+PROD_TAG_TYPE="PROD"
+
+#app section in config file
+APP_NAME=
+DEPLOY_VERSION=
+
+#
+#
+#variable to use
+
+
+Usage() {
+    echo "Usage: rat [-m (QA|PROD)| -d (QA|PROD)]  -a application [-v version]  [-res]"
+    echo "-m --make      : make tag for QA or PROD"
+    echo "-d --deploy    : deploy from tag QA or PROD"
+    echo "-a --app       : application name and directory name in TagDir"
+    echo "-v --version   : special version of app when deploy "
+    echo "-res           : when deploy special res or www1"
+    echo
+    echo "TODO -r --rollback"
+    echo
+    echo "    .--,       .--,"
+    echo "   ( (  \.---./  ) )"
+    echo "    '.__/o   o\__.'"
+    echo "       {=  ^  =}"
+    echo "        >  -  <"
+    echo '       /       \'
+    echo '      //       \\'
+    echo '     //|   .   |\\'
+    echo '     "'"'\       /'"'"_.-~^`'"'-."
+    echo "        \  _  /--'"'         `'
+    echo "      ___)( )(___"
+    echo "     (((__) (__)))"
+    echo
+    echo "$(tput setaf 1)it's right(rat) $(tput sgr0)"
+    exit 0
+}
+
+# parset args by getopt
+# getopt easy to use
+
+ParseArgs(){
+    TEMP=`getopt -o m:d:a:v: --long res,make:,app:,version:,deploy: \
+    -n 'rat' -- "$@"`
+
+    if [ $? != 0 ] ; then echo "Terminating..."; Usage >&2 ; exit 1 ; fi
+
+    # Note the quotes around `$TEMP': they are essential!
+    eval set -- "$TEMP"
+
+    while true ; do
+        case "$1" in
+            #-a|--a-long) echo "Option a" ; shift ;;
+            -m|--make)
+            ACTION=$MAKE_ACTION
+            GetTagName $2
+            TAG_TYPE=$TEMP_TAG_NAME
+            shift 2
+            ;;
+            -d|--deploy)
+            ACTION=$DEPLOY_ACTION
+            GetTagName $2
+            TAG_TYPE=$TEMP_TAG_NAME
+            shift 2
+            ;;
+            -a|--app)
+            APP_NAME=$2
+            shift 2
+            ;;
+            -v|--version)
+            DEPLOY_VERSION=$2
+            shift 2
+            ;;
+            --res)
+            DEPLOY_TYPE="res"
+            shift  ;;
+
+            --) shift ; break ;;
+
+            *) Usage exit 1 ;;
+        esac
+    done
+
+    if [ $# -gt 0 ];then
+        echo "unused arguments :"
+        for arg do echo '--> '"\`$arg'" ; done
+    fi
+
+    if [ -z $ACTION ];then
+        Usage
+    fi
+
+    if [ -z $APP_NAME ];then
+        Usage
+    fi
+}
+
+GetTagName() {
+    if [ $1 != "QA" -a  $1 != "PROD" ];then
+        echo "Error Tag Type $1 ( QA or PROD)" >&2
+        Usage
+    fi
+
+    if [ $1 = "QA" ];then
+        TEMP_TAG_NAME="QA"
+    fi
+
+    if [ $1 = "PROD" ];then
+        TEMP_TAG_NAME="PROD"
+    fi
+}
+
+ParseArgs $@
+
+
+#start to run task
+#echo $ACTION 'make deploy'
+#echo $TAG_TYPE 'QA or PROD'
+#echo $APP_NAME 'album org'
+#echo $DEPLOY_TYPE 'www or res'
+#echo $DEPLOY_VERSION 'default by config'
+
+
+CopyTask(){
+    NOW=$(date +"%Y-%m-%d %H:%M:%S")
+    SVN_CMD="$SVN_PATH copy --parents $1 $2 -m 'add ${SECTION_NAME} tag ${FILE_TYPE} version ${SECTION_VERSION}'"
+    echo  $NOW "    " $SVN_CMD >> update.log
+}
+
+#need ops to fixed
+DeployTask(){
+    NOW=$(date +"%Y-%m-%d %H:%M:%S")
+
+    if [ -e "$2" ];then
+        SVN_CMD="$SVN_PATH switch $1 $2 "
+    else
+        SVN_CMD="$SVN_PATH up $2 "
+        $SVN_CMD
+        SVN_CMD="$SVN_PATH checkout $1 $2 "
+    fi
+
+    echo $SVN_CMD
+    $SVN_CMD
+    echo  $NOW "    " $SVN_CMD >> update.log
+}
+
+
+TASK_START=0
+
+#file to stdin
+exec 3<&0
+exec 0<$DEPLOY_FILE
+
+#loop to read and run
+while read line
+do
+    #ignore white
+    if [ -z "$line" ]; then
+        echo "empty line in "$DEPLOY_FILE" SECTION "$SECTION
+        continue
+    fi
+
+    #ignore comment
+    if [ "${line:0:1}" = "#" ]; then
+        continue
+    fi
+
+    if [ "${line:0:1}" = "[" ]; then
+        #break when new section
+        if [ $TASK_START -eq 1 ];then
+            break
+        fi
+
+        #分析版本 module
+        LINE_LENAGH=${#line}
+        SECTION=( ${line:1:$LINE_LENAGH - 2} )
+        SECTION_LENGTH=${#SECTION[@]}
+        SECTION_NAME=${SECTION[0]}
+
+        if [ $SECTION_LENGTH -gt 1 ];then
+            SECTION_VERSION=${SECTION[1]}
+            SECTION_VERSION=${SECTION_VERSION:8}
+        else
+            SECTION_VERSION=1
+        fi
+
+        if [ ! -z $DEPLOY_VERSION ] && [  $ACTION = "deploy" ] ;then
+            SECTION_VERSION=$DEPLOY_VERSION
+        fi
+
+        echo $SECTION_VERSION
+        #分析版本 module end
+
+        #匹配段名开始使用数据
+        if [ "$SECTION_NAME" = "$APP_NAME" ]; then
+            TASK_START=1
+            continue
+        else
+            continue
+        fi
+    fi
+
+    #执行命令
+    if [ $TASK_START -eq 1 ]; then
+        FILE_TYPE=""
+        if [ "${line:0:4}" = "res/" ]; then
+            #res 代码库
+            FILE_TYPE="res"
+            TRUNK_FILE=$RES_TRUNK_BASE/${line:4}
+            QA_TAG_FILE=$RES_QA_TAG_BASE/$SECTION/$SECTION_VERSION/${line:4}
+            PROD_TAG_FILE=$RES_PROD_TAG_BASE/$SECTION/$SECTION_VERSION/${line:4}
+            SERVER_FILE=$RES_SERVER_BASE/${line:4}
+        else
+            #qin 代码库
+            FILE_TYPE="www1"
+            TRUNK_FILE=$TRUNK_BASE/$line
+            QA_TAG_FILE=$QA_TAG_BASE/$SECTION/$SECTION_VERSION/$line
+            PROD_TAG_FILE=$PROD_TAG_BASE/$SECTION/$SECTION_VERSION/$line
+            SERVER_FILE=$SERVER_BASE/${line:4}
+        fi
+
+
+        if [ $ACTION = $MAKE_ACTION ];then
+            if [ $TAG_TYPE = $QA_TAG_TYPE ];then
+                CopyTask $TRUNK_FILE $QA_TAG_FILE
+            fi
+
+            if [ $TAG_TYPE = $PROD_TAG_TYPE ];then
+                CopyTask $QA_TAG_FILE $PROD_TAG_FILE
+            fi
+        fi
+
+        if [ $ACTION = $DEPLOY_ACTION ];then
+            if [  $DEPLOY_TYPE != $FILE_TYPE ];then
+                continue
+            fi
+
+            if [ $TAG_TYPE = $QA_TAG_TYPE ];then
+                DeployTask $QA_TAG_FILE $SERVER_FILE
+            fi
+
+            if [ $TAG_TYPE = $PROD_TAG_TYPE ];then
+                DeployTask $PROD_TAG_FILE $SERVER_FILE
+            fi
+
+        fi
+    fi
+    #执行命令结束
+done
+
+exec 0<&3
+
+if [ $TASK_START -eq 0 ];then
+    echo "配置文件里 没有找到操作的目标"
+    echo
+    Usage
+fi
+
+echo "$ACTION $SECTION_NAME end"
