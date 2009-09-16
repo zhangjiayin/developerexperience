@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-import threading, time, random,cmemcached
-import getopt,sys 
+import threading, time, random
+import getopt,sys
 import redis
 
 class testObj():
@@ -16,7 +16,7 @@ class BenchMarker(threading.Thread):
 	self.id = id
 	self.client = redis.Redis(host="192.168.3.155")
 	self.client.connect()
-	
+
     def run (self):
 	start = time.time()
 	out =  "thread :" + str(self.id) + " write : " + str(self.write_time)  + " times " \
@@ -35,7 +35,7 @@ class BenchMarker(threading.Thread):
 		for x in xrange(self.write_time):
 			self.writeTest()
 		return True
-	
+
 	for x in xrange(self.write_time + self.read_time):
 
 		if(self.read_time <= 0):
@@ -61,16 +61,16 @@ class BenchMarker(threading.Thread):
 	if is_obj:
 	    value = testObj(value)
 	self.client.set(key, value)
-	
+
     def readTest(self):
 	key   = "prefix1_" + str(random.randint(1,random_key_range))
 	self.client.get(key)
 
 if __name__ == '__main__':
 
-	
+
     def	Usage():
-	print 
+	print
         print "python reids benchmark"
 	print "   -k --key       int type key random range default 10000000"
 	print "   -v --val       int type value random range default 10000000"
@@ -88,8 +88,8 @@ if __name__ == '__main__':
     read_time   = 1000
     pool_size   = 10
     is_obj 	= False
-    opts,args=getopt.getopt(sys.argv[1:],'k::v::p::w::r::oh', "key=,value=, poolsize=, help")
-	
+    opts,args=getopt.getopt(sys.argv[1:],'k::v::p::w::r::oh', ["key=","value=", "poolsize=","writetime=", "readtime=", "help"])
+
     for a, o in opts:
 	if a in("-k", "--key"):
 	    random_key_range = int(o)
@@ -105,7 +105,7 @@ if __name__ == '__main__':
 	    Usage()
 	    sys.exit()
 
-    pool = []	
+    pool = []
 
     for i in xrange(pool_size):
 	pool.append(BenchMarker(i, write_time=write_time, read_time=read_time))
@@ -117,7 +117,7 @@ if __name__ == '__main__':
 	t.join()
 
     end = time.time()
-	
+
     cost = end - start
     print str(pool_size) + " threads "  + "cost:" + str(cost) + " seconds"
     print "finish"
